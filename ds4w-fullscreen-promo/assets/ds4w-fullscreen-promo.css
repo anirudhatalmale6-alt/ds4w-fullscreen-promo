@@ -27,6 +27,30 @@ body.ds4w-fsp-locked .pum-overlay {
 	backdrop-filter: blur(3px);
 }
 
+/*
+ * Deactivate the flipbook while the promo is up.
+ *
+ * The Paperturn player captures pointer events across its whole embed area — it has to,
+ * it's a page-turning reader. On the live site that meant it swallowed the click meant for
+ * the promo's button, even though the button was painted on top of it. Verified in a real
+ * browser: the click never reached the button.
+ *
+ * Switching the embed to pointer-events:none while locked fixes that, and is also just
+ * correct behaviour: the whole point of the lock is that the reader cannot touch the book
+ * until they have acted on the promo.
+ */
+body.ds4w-fsp-locked [data-paperturn],
+body.ds4w-fsp-locked [data-paperturn] iframe,
+body.ds4w-fsp-locked iframe[src*="paperturn"] {
+	pointer-events: none !important;
+}
+
+/* The popup and everything in it must stay clickable, above all of that. */
+body.ds4w-fsp-locked .pum-container,
+body.ds4w-fsp-locked .pum-container * {
+	pointer-events: auto !important;
+}
+
 /* ------------------------------------------------------------------ */
 /* The flipbook, once it's fullscreen                                  */
 /* ------------------------------------------------------------------ */

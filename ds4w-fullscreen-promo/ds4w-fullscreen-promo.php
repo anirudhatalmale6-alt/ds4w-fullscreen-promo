@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fullscreen Promo Popup (Popup Maker add-on)
  * Description: Auto-opens a locked promotional Popup Maker popup on selected pages and puts the visitor's browser into fullscreen on their first interaction. Built for de-stress4wellness.com.
- * Version:     1.3.0
+ * Version:     1.7.0
  * Author:      Anirudha Talmale
  * License:     GPL-2.0-or-later
  * Text Domain: ds4w-fsp
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DS4W_FSP_VERSION', '1.3.0' );
+define( 'DS4W_FSP_VERSION', '1.7.0' );
 define( 'DS4W_FSP_FILE', __FILE__ );
 define( 'DS4W_FSP_URL', plugin_dir_url( __FILE__ ) );
 define( 'DS4W_FSP_PATH', plugin_dir_path( __FILE__ ) );
@@ -32,6 +32,157 @@ const DS4W_FSP_OPT_GATE_URL = 'ds4w_fsp_gate_url';  // Where to send everyone el
 
 /** Default selector: the Paperturn flipbook iframe, however Elementor wraps it. */
 const DS4W_FSP_DEFAULT_SELECTOR = '[data-paperturn] iframe, iframe[src*="paperturn"]';
+
+/* -------------------------------------------------------------------------
+ * Cache control — the load-bearing fix
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Stop the edge caches from caching the VIP page or the Express Login request.
+ *
+ * THIS IS WHAT MAKES THE INVITATION LINKS WORK AT ALL.
+ *
+ * The site sits behind Sucuri CloudProxy AND GoDaddy's Cloudflare CDN, with the VIP page
+ * being served `Cache-Control: public, max-age=2678400` (31 days). When an edge cache
+ * considers a response cacheable, it strips `Set-Cookie` from it — otherwise it would
+ * serve one visitor's session cookie to everybody who hits the cached copy.
+ *
+ * Express Login works by calling wp_set_auth_cookie() and redirecting. Verified on the
+ * live site (2026-07-11): WordPress emits the cookie correctly — it is present in
+ * headers_list() at redirect time — and the edge then removes it. The reader lands back
+ * on the page still logged out, and the magic link silently does nothing.
+ *
+ * So we mark these responses private and uncacheable:
+ *   - any request carrying the Express Login parameters (the response that sets the cookie)
+ *   - the VIP pages themselves (per-reader content; must never be cached and served to others,
+ *     which would also hand the book to strangers straight out of the cache)
+ *
+ * DONOTCACHEPAGE is the de-facto standard constant honoured by WP caching plugins
+ * (including WP Cloudflare Super Page Cache, which is active here).
+ */
+function ds4w_fsp_never_cache() {
+	$is_express_login = ! empty( $_GET['expresslogin'] ) || ! empty( $_GET['token'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+	if ( ! $is_express_login && ! ds4w_fsp_is_target_page( get_queried_object_id() ) ) {
+		return;
+	}
+
+	if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+		define( 'DONOTCACHEPAGE', true );
+	}
+	if ( ! defined( 'DONOTCACHEOBJECT' ) ) {
+		define( 'DONOTCACHEOBJECT', true );
+	}
+	if ( ! defined( 'DONOTCACHEDB' ) ) {
+		define( 'DONOTCACHEDB', true );
+	}
+
+	nocache_headers();
+
+	// nocache_headers() alone leaves some edges unconvinced; be explicit and final.
+	header( 'Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0', true );
+	header( 'Pragma: no-cache', true );
+	header( 'X-Accel-Expires: 0', true );      // nginx
+	header( 'X-Cache-Control: private', true );
+}
+add_action( 'send_headers', 'ds4w_fsp_never_cache', 0 );
+add_action( 'template_redirect', 'ds4w_fsp_never_cache', 0 );
+
+/*
+ * Express Login redirects from `init`, so send_headers/template_redirect never run on the
+ * request that actually sets the cookie. Catch it earlier, before that redirect fires.
+ */
+add_action(
+	'init',
+	function () {
+		if ( ! empty( $_GET['expresslogin'] ) || ! empty( $_GET['token'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			ds4w_fsp_never_cache();
+		}
+	},
+	0
+);
+
+/**
+ * Tell WP Cloudflare Super Page Cache to leave these requests alone.
+ *
+ * Its advanced-cache drop-in does exactly this, and it is why the invitation links fail:
+ *
+ *     if ( (int) $swcfpc_config['cf_maxage'] > 0 ) {
+ *         header_remove( 'Set-Cookie' );      // <-- eats the Express Login session
+ *     }
+ *
+ * `swcfpc_cache_bypass` is that plugin's own supported opt-out filter, so we use it rather
+ * than patching their code (which an update would overwrite anyway).
+ *
+ * @param bool $bypass Current decision.
+ * @return bool
+ */
+function ds4w_fsp_swcfpc_bypass( $bypass ) {
+	if ( ! empty( $_GET['expresslogin'] ) || ! empty( $_GET['token'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return true;
+	}
+
+	return ds4w_fsp_is_target_page( get_queried_object_id() ) ? true : $bypass;
+}
+add_filter( 'swcfpc_cache_bypass', 'ds4w_fsp_swcfpc_bypass', 10, 1 );
+
+/**
+ * Re-assert the no-cache headers at the very last moment before a redirect goes out.
+ *
+ * The Express Login response is a redirect fired from `init`, and the caching layers stamp
+ * `Cache-Control: public, max-age=2678400` onto it. An edge cache that believes a response
+ * is public will not forward its Set-Cookie — which is precisely how the login cookie was
+ * being lost. wp_redirect() runs this filter immediately before it sends its headers, so
+ * this is the last word on the matter.
+ *
+ * @param string $location Redirect target.
+ * @return string
+ */
+function ds4w_fsp_force_private_redirect( $location ) {
+	if ( empty( $_GET['expresslogin'] ) && empty( $_GET['token'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return $location;
+	}
+
+	header_remove( 'Cache-Control' );
+	header_remove( 'X-WP-CF-Super-Cache-Cache-Control' );
+	header_remove( 'Pragma' );
+	header_remove( 'Expires' );
+
+	header( 'Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0', true );
+	header( 'Pragma: no-cache', true );
+
+	return $location;
+}
+add_filter( 'wp_redirect', 'ds4w_fsp_force_private_redirect', PHP_INT_MAX, 1 );
+
+/**
+ * Last word on the page responses too (not just redirects) — run after every other
+ * send_headers listener has had its say.
+ */
+add_action(
+	'send_headers',
+	function () {
+		if ( ! ds4w_fsp_is_target_page( get_queried_object_id() ) ) {
+			return;
+		}
+
+		header_remove( 'Cache-Control' );
+		header_remove( 'X-WP-CF-Super-Cache-Cache-Control' );
+		header( 'Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0', true );
+	},
+	PHP_INT_MAX
+);
+
+/**
+ * Bare page-ID check with no side conditions — used by the cache guard, which must run
+ * even when the visitor is logged out and the access gate would otherwise bail early.
+ *
+ * @param int $id Page ID.
+ * @return bool
+ */
+function ds4w_fsp_is_target_page( $id ) {
+	return $id && in_array( (int) $id, ds4w_fsp_target_ids(), true );
+}
 
 /* -------------------------------------------------------------------------
  * Access gate
