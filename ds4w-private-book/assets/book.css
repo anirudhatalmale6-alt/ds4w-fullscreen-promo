@@ -1,0 +1,364 @@
+/**
+ * The reading room.
+ *
+ * Dark surround so the page whites read as paper rather than as part of the site, and so the
+ * book still looks right when it fills a screen.
+ */
+
+.ds4w-book {
+	--ds4w-ink: #f2f5f4;
+	--ds4w-bg: #10201c;
+	--ds4w-bar: #17302a;
+	--ds4w-accent: #1c8a6b;
+
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	background: var(--ds4w-bg);
+	border-radius: 10px;
+	overflow: hidden;
+	color: var(--ds4w-ink);
+	min-height: 70vh;
+}
+
+/* Fullscreen — the whole point of the promo popup that got us here. */
+.ds4w-book.is-fullscreen,
+.ds4w-book.is-pseudo-fullscreen {
+	border-radius: 0;
+	height: 100vh;
+	width: 100vw;
+}
+
+.ds4w-book.is-pseudo-fullscreen {
+	position: fixed;
+	inset: 0;
+	z-index: 999999;
+}
+
+.ds4w-book__stage {
+	position: relative;
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 18px 12px;
+	min-height: 0;
+}
+
+.ds4w-book__flip {
+	margin: 0 auto;
+	transition: transform 0.35s ease;
+}
+
+/*
+ * Cover and back cover sit alone in a two-page spread. Shift the spread by half a page so the
+ * one visible page lands on the centre line instead of hanging off to one side.
+ */
+.ds4w-book.is-spread.is-cover .ds4w-book__flip {
+	transform: translateX(-25%);
+}
+
+.ds4w-book.is-spread.is-back .ds4w-book__flip {
+	transform: translateX(25%);
+}
+
+/* Pages ------------------------------------------------------------- */
+
+.ds4w-page {
+	background: #fff;
+	overflow: hidden;
+}
+
+.ds4w-page img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	opacity: 0;
+	transition: opacity 0.25s ease;
+	-webkit-user-drag: none;
+	user-select: none;
+}
+
+.ds4w-page.is-loaded img {
+	opacity: 1;
+}
+
+/* A quiet placeholder while a page is on its way. */
+.ds4w-page__spin {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 26px;
+	height: 26px;
+	margin: -13px 0 0 -13px;
+	border: 2px solid rgba(0, 0, 0, 0.12);
+	border-top-color: rgba(0, 0, 0, 0.4);
+	border-radius: 50%;
+	animation: ds4w-spin 0.8s linear infinite;
+}
+
+.ds4w-page.is-loaded .ds4w-page__spin {
+	display: none;
+}
+
+@keyframes ds4w-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Big invisible click targets down the left and right of the book. */
+.ds4w-book__edge {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 8%;
+	min-width: 44px;
+	border: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.55);
+	font-size: 26px;
+	cursor: pointer;
+	transition: background 0.2s, color 0.2s;
+}
+
+.ds4w-book__edge:hover {
+	background: rgba(255, 255, 255, 0.05);
+	color: #fff;
+}
+
+.ds4w-book__edge--prev { left: 0; }
+.ds4w-book__edge--next { right: 0; }
+
+.ds4w-book__loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgba(255, 255, 255, 0.65);
+	font-size: 0.95rem;
+}
+
+/* Toolbar ------------------------------------------------------------ */
+
+.ds4w-book__bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 9px 12px;
+	background: var(--ds4w-bar);
+	border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ds4w-book__group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ds4w-book__nav {
+	flex: 1 1 auto;
+	justify-content: center;
+}
+
+.ds4w-book__btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 7px 12px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.82);
+	font: inherit;
+	font-size: 0.85rem;
+	line-height: 1;
+	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
+}
+
+.ds4w-book__btn:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.ds4w-book__btn--icon {
+	padding: 7px 9px;
+}
+
+.ds4w-ico {
+	width: 17px;
+	height: 17px;
+	flex: 0 0 auto;
+}
+
+.ds4w-book__counter {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin: 0 4px;
+	color: rgba(255, 255, 255, 0.65);
+	font-size: 0.85rem;
+}
+
+.ds4w-book__counter input {
+	width: 46px;
+	padding: 5px 6px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 5px;
+	background: rgba(0, 0, 0, 0.25);
+	color: #fff;
+	font: inherit;
+	font-size: 0.85rem;
+	text-align: center;
+}
+
+/* Panels ------------------------------------------------------------- */
+
+.ds4w-book__panel {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	width: min(340px, 88%);
+	background: #132722;
+	border-left: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow: -14px 0 40px rgba(0, 0, 0, 0.35);
+	transform: translateX(100%);
+	transition: transform 0.2s ease;
+}
+
+.ds4w-book__panel.is-open {
+	transform: translateX(0);
+}
+
+.ds4w-book__panel-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 14px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	font-size: 0.9rem;
+}
+
+.ds4w-book__close {
+	border: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.6);
+	font-size: 1.4rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.ds4w-book__close:hover { color: #fff; }
+
+/* Thumbnails */
+
+.ds4w-book__thumbs {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
+	padding: 12px;
+}
+
+.ds4w-thumb {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.55);
+	font-size: 0.7rem;
+	cursor: pointer;
+}
+
+.ds4w-thumb img {
+	width: 100%;
+	border: 2px solid transparent;
+	border-radius: 3px;
+	background: #fff;
+	transition: border-color 0.15s;
+}
+
+.ds4w-thumb:hover img {
+	border-color: var(--ds4w-accent);
+}
+
+/* Search */
+
+.ds4w-book__search {
+	padding: 12px;
+}
+
+.ds4w-book__search input {
+	width: 100%;
+	padding: 9px 11px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.25);
+	color: #fff;
+	font: inherit;
+	font-size: 0.9rem;
+}
+
+.ds4w-book__results {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 0 12px 12px;
+}
+
+.ds4w-result {
+	display: block;
+	width: 100%;
+	margin-bottom: 6px;
+	padding: 9px 10px;
+	border: 0;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.04);
+	color: rgba(255, 255, 255, 0.78);
+	font: inherit;
+	font-size: 0.8rem;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ds4w-result:hover {
+	background: rgba(255, 255, 255, 0.09);
+}
+
+.ds4w-result strong {
+	display: block;
+	margin-bottom: 2px;
+	color: var(--ds4w-accent);
+	font-size: 0.75rem;
+}
+
+.ds4w-result mark {
+	background: rgba(28, 138, 107, 0.45);
+	color: #fff;
+}
+
+.ds4w-book__muted {
+	margin: 6px 0;
+	color: rgba(255, 255, 255, 0.45);
+	font-size: 0.82rem;
+}
+
+/* Small screens ------------------------------------------------------ */
+
+@media (max-width: 767px) {
+	.ds4w-lbl { display: none; }
+
+	.ds4w-book__bar { padding: 8px 6px; }
+
+	.ds4w-book__thumbs { grid-template-columns: repeat(2, 1fr); }
+}
