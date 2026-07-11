@@ -101,11 +101,55 @@
 	 * iOS Safari refuses fullscreen on anything but a <video>. When there's no real
 	 * Fullscreen API we fake it: pin the document to the viewport and kill scrolling,
 	 * so the visitor gets the same immersive, chrome-free result.
+	 *
+	 * @param {boolean} isOurFullscreen True when this pinned layout IS the immersive result
+	 *                                  we're giving the reader (iOS, which has no Fullscreen
+	 *                                  API for page elements). False when it's a consolation
+	 *                                  prize after a real request was refused — in which case
+	 *                                  it must NOT count as the reader having complied.
 	 */
-	function pseudoFullscreen() {
+	function pseudoFullscreen( isOurFullscreen ) {
 		root.classList.add( 'ds4w-pseudo-fullscreen' );
 		document.body.classList.add( 'ds4w-pseudo-fullscreen' );
+
+		// No fullscreenchange event fires for this path, so finish the job by hand.
+		if ( isOurFullscreen ) {
+			complete();
+		}
 	}
+
+	/**
+	 * The promo has done its job — the reader is looking at the book, full bleed.
+	 *
+	 * This is driven by the fullscreen state itself, not by which handler happened to run.
+	 * The CTA click and the catch-all first-gesture listener are two routes to the same
+	 * place, and on the live site the catch-all (capture phase) sometimes gets there first,
+	 * leaving the CTA's handler unfired — which used to strand the reader with the lock
+	 * still on and the promo still up behind the fullscreen book. Anchoring the release to
+	 * "are we actually fullscreen?" removes that race entirely.
+	 */
+	function complete() {
+		if ( unlocked ) {
+			return;
+		}
+
+		releaseLock();
+		dismissForGood();
+
+		if ( window.PUM && typeof window.PUM.close === 'function' ) {
+			window.PUM.close( popupId );
+		}
+	}
+
+	[ 'fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange' ].forEach(
+		function ( evt ) {
+			document.addEventListener( evt, function () {
+				if ( isFullscreen() ) {
+					complete();
+				}
+			} );
+		}
+	);
 
 	/**
 	 * MUST be called synchronously from inside a user-gesture handler.
@@ -120,7 +164,7 @@
 		var el = fullscreenTarget();
 
 		if ( ! fullscreenSupported( el ) ) {
-			pseudoFullscreen(); // iOS and other holdouts.
+			pseudoFullscreen( true ); // iOS and other holdouts — this is their fullscreen.
 			return;
 		}
 
@@ -147,11 +191,11 @@
 							return;
 						} catch ( e2 ) { /* fall through */ }
 					}
-					pseudoFullscreen();
+					pseudoFullscreen( false );
 				} );
 			}
 		} catch ( e ) {
-			pseudoFullscreen();
+			pseudoFullscreen( false );
 		}
 	}
 
@@ -180,17 +224,34 @@
 	 */
 	function onAction() {
 		goFullscreen();  // First — must not lose the user activation.
-		releaseLock();
 
-		if ( window.PUM && typeof window.PUM.close === 'function' ) {
-			window.PUM.close( popupId );
-		}
+		/*
+		 * complete() normally runs off the fullscreenchange event. But if the browser
+		 * refuses fullscreen without saying so, the reader would be left staring at a
+		 * locked promo they just clicked. They did their part; never trap them.
+		 */
+		window.setTimeout( complete, 1200 );
 
 		if ( CTA_URL ) {
 			// Note: navigating away drops fullscreen — a new document has no user
 			// activation, so the browser exits. Deliberate, and documented for the client.
-			window.location.href = CTA_URL;
+			window.setTimeout( function () {
+				window.location.href = CTA_URL;
+			}, 1300 );
 		}
+	}
+
+	/**
+	 * Hide the promo permanently, independently of Popup Maker's close animation.
+	 *
+	 * PUM.close() fades out over a few hundred milliseconds and only then sets display:none.
+	 * We don't leave "is the promo gone?" in the hands of a third-party animation.
+	 */
+	function dismissForGood() {
+		if ( $popup ) {
+			$popup.addClass( 'ds4w-fsp-dismissed' );
+		}
+		document.body.classList.add( 'ds4w-fsp-done' );
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -201,6 +262,16 @@
 		// Popup Maker fires this on the popup element once it has opened.
 		.on( 'pumAfterOpen', '#pum-' + popupId, function () {
 			$popup = $( this );
+
+			// Already complied once — don't ask again, whatever re-opened it.
+			if ( unlocked ) {
+				dismissForGood();
+				if ( window.PUM && typeof window.PUM.close === 'function' ) {
+					window.PUM.close( popupId );
+				}
+				return;
+			}
+
 			applyLock();
 
 			// The call-to-action inside the popup.
@@ -218,14 +289,19 @@
 		} );
 
 	/**
-	 * Second safety net: catch the visitor's first gesture ANYWHERE on the page and
-	 * use it for fullscreen. Covers the case where they click/tap/press outside the
-	 * CTA (or the client edits the popup and drops the ds4w-fs-go class).
+	 * Second safety net: catch the visitor's first click/tap ANYWHERE on the page and
+	 * use it for fullscreen. Covers the case where they click outside the CTA (or the
+	 * client edits the popup and drops the ds4w-fs-go class).
+	 *
+	 * Pointer gestures only — deliberately NOT keydown. Escape carries no user activation,
+	 * so a fullscreen request made from it is refused; treating that keypress as a gesture
+	 * meant pressing Escape burned the one-shot attempt and dropped through to the fallback,
+	 * which handed the reader exactly the skip the lock exists to prevent.
 	 *
 	 * Capture phase + { once: true } so it runs before anything can stop propagation,
 	 * and never fires twice.
 	 */
-	[ 'click', 'touchend', 'keydown' ].forEach( function ( evt ) {
+	[ 'click', 'touchend' ].forEach( function ( evt ) {
 		document.addEventListener(
 			evt,
 			function () {

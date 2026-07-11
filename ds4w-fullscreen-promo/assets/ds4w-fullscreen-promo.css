@@ -51,6 +51,14 @@ body.ds4w-fsp-locked .pum-container * {
 	pointer-events: auto !important;
 }
 
+/*
+ * Once the reader has acted, the promo is gone and stays gone — including after they
+ * press Esc to leave fullscreen. Set by JS rather than waiting on Popup Maker's fade.
+ */
+.pum-overlay.ds4w-fsp-dismissed {
+	display: none !important;
+}
+
 /* ------------------------------------------------------------------ */
 /* The flipbook, once it's fullscreen                                  */
 /* ------------------------------------------------------------------ */
@@ -102,22 +110,31 @@ body.ds4w-pseudo-fullscreen {
 	padding: 8px 4px;
 }
 
+/*
+ * Colours are set explicitly rather than inherited.
+ *
+ * Popup Maker's theme supplies a near-white panel but a white heading colour, which left
+ * the title all but invisible against it. Since the promo is the first thing an invited
+ * reader ever sees, it doesn't get to depend on whatever theme the popup happens to use.
+ */
 .ds4w-promo__title {
 	margin: 0 0 12px;
+	color: #12332c;
 	font-size: 1.9em;
 	line-height: 1.25;
 }
 
 .ds4w-promo__text {
 	margin: 0 0 22px;
+	color: #2f3e3a;
 	font-size: 1.05em;
 	line-height: 1.55;
 }
 
 .ds4w-promo__note {
 	margin: 14px 0 0;
+	color: #5c6b66;
 	font-size: 0.82em;
-	opacity: 0.7;
 }
 
 /* The call-to-action. Any element with .ds4w-fs-go triggers fullscreen. */

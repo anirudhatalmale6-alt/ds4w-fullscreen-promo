@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fullscreen Promo Popup (Popup Maker add-on)
  * Description: Auto-opens a locked promotional Popup Maker popup on selected pages and puts the visitor's browser into fullscreen on their first interaction. Built for de-stress4wellness.com.
- * Version:     1.7.0
+ * Version:     1.8.4
  * Author:      Anirudha Talmale
  * License:     GPL-2.0-or-later
  * Text Domain: ds4w-fsp
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DS4W_FSP_VERSION', '1.7.0' );
+define( 'DS4W_FSP_VERSION', '1.8.4' );
 define( 'DS4W_FSP_FILE', __FILE__ );
 define( 'DS4W_FSP_URL', plugin_dir_url( __FILE__ ) );
 define( 'DS4W_FSP_PATH', plugin_dir_path( __FILE__ ) );
@@ -185,6 +185,168 @@ function ds4w_fsp_is_target_page( $id ) {
 }
 
 /* -------------------------------------------------------------------------
+ * Express Login bounce — makes the magic links actually sign people in
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Run the Express Login handshake on an /wp-admin/ path so the auth cookie survives the CDN.
+ *
+ * THE BUG THIS FIXES
+ * ------------------
+ * GoDaddy's edge strips `Set-Cookie` from any response it considers cacheable, and it
+ * considers every front-end URL cacheable — it rewrites them to `public, max-age=2678400`
+ * no matter what Cache-Control PHP sends. Express Login does its wp_set_auth_cookie() on
+ * whatever front-end URL the invitation points at, so its cookie is always destroyed in
+ * flight. The reader lands back on the page logged out, with no error anywhere. That is
+ * why the magic links have never worked, and no amount of cache headers from PHP fixes it —
+ * the edge overrides them.
+ *
+ * Measured on the live site (2026-07-11) with an identical cookie set from two paths:
+ *
+ *   GET /?probe=1                       -> Set-Cookie: STRIPPED   cache-control: public, max-age=2678400
+ *   GET /wp-admin/admin-post.php?...    -> Set-Cookie: SURVIVES   cache-control: private, no-cache
+ *                                                                 x-gateway-cache-status: BYPASS
+ *
+ * So the fix is not to fight the edge, it is to do the login somewhere the edge already
+ * leaves alone. We intercept the invitation on the front end and bounce it to
+ * admin-post.php carrying the same credentials. Express Login hooks `init` and reads
+ * $_REQUEST, and admin-post.php fires `init` — so its own handler runs there untouched,
+ * sets the cookie on a path the edge does not cache, and we send the reader on to the page
+ * they were invited to.
+ *
+ * We change nothing about how the client generates links: his existing Express Login
+ * invitations keep working exactly as they are.
+ */
+const DS4W_FSP_BOUNCE_ACTION = 'ds4w_express_login';
+const DS4W_FSP_BOUNCE_DEST   = 'ds4w_dest';
+
+/**
+ * Is this request an Express Login invitation?
+ *
+ * @return bool
+ */
+function ds4w_fsp_is_express_login_request() {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended
+	return ! empty( $_REQUEST['expresslogin'] ) && ! empty( $_REQUEST['token'] );
+	// phpcs:enable
+}
+
+/**
+ * Catch the invitation on the front end and re-issue it against admin-post.php.
+ *
+ * Priority 1: ahead of Express Login's own handler (init, priority 10), so we get there
+ * before it burns the login on an uncacheable-cookie response.
+ */
+function ds4w_fsp_bounce_express_login() {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended
+	if ( ! ds4w_fsp_is_express_login_request() ) {
+		return;
+	}
+
+	// Already on the admin path (or some other non-page context) — let Express Login run.
+	if ( is_admin() || wp_doing_ajax() || wp_doing_cron() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+		return;
+	}
+
+	// Where the reader was actually invited to: this URL, minus the login credentials.
+	$dest = remove_query_arg( [ 'expresslogin', 'pk', 'email', 'token', 'expiry' ] );
+	if ( empty( $dest ) ) {
+		$dest = home_url( '/' );
+	}
+
+	/*
+	 * Percent-encode every value we carry across.
+	 *
+	 * This is not optional. wp_redirect() runs the Location through wp_sanitize_redirect(),
+	 * which deletes any character outside its allow-list — and `$` is not on that list. The
+	 * Express Login token is a bcrypt hash ($wp$2y$10$...), so an unencoded token arrives at
+	 * admin-post.php as "wp2y10..." with every `$` silently eaten, and authentication fails
+	 * for a reason nothing reports. Encoded, the `$` travels as %24, which survives.
+	 *
+	 * add_query_arg() does not encode values for us (build_query() passes $urlencode = false),
+	 * so we do it here; PHP decodes it once on the way into $_REQUEST at the other end.
+	 */
+	$credentials = [];
+	foreach ( [ 'expresslogin', 'pk', 'email', 'token', 'expiry' ] as $key ) {
+		if ( isset( $_REQUEST[ $key ] ) && '' !== $_REQUEST[ $key ] ) {
+			$credentials[ $key ] = rawurlencode( wp_unslash( $_REQUEST[ $key ] ) );
+		}
+	}
+	// phpcs:enable
+
+	$credentials['action']               = DS4W_FSP_BOUNCE_ACTION;
+	$credentials[ DS4W_FSP_BOUNCE_DEST ] = rawurlencode( $dest );
+
+	// wp_redirect(), not wp_safe_redirect(): admin_url() is our own site by definition, and
+	// we must not lose the credentials to a sanitiser.
+	wp_redirect( add_query_arg( $credentials, admin_url( 'admin-post.php' ) ), 302 );
+	exit;
+}
+add_action( 'init', 'ds4w_fsp_bounce_express_login', 1 );
+
+/**
+ * Send the freshly-logged-in reader to the page they were invited to.
+ *
+ * Express Login finishes with wp_safe_redirect( <current URL minus credentials> ). On the
+ * bounce that current URL is admin-post.php, which would loop. wp_redirect() applies this
+ * filter immediately before sending its headers, so this is the last word: swap in the real
+ * destination we carried through.
+ *
+ * @param string $location Redirect target chosen by Express Login.
+ * @return string
+ */
+function ds4w_fsp_bounce_destination( $location ) {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended
+	if ( empty( $_REQUEST['action'] ) || DS4W_FSP_BOUNCE_ACTION !== $_REQUEST['action'] ) {
+		return $location;
+	}
+	if ( empty( $_REQUEST[ DS4W_FSP_BOUNCE_DEST ] ) ) {
+		return $location;
+	}
+
+	/*
+	 * Only hijack the redirect on SUCCESS.
+	 *
+	 * When the token is bad or expired, Express Login bails out through auth_redirect(),
+	 * which is also a wp_redirect() and would otherwise be rewritten to the VIP page by this
+	 * same filter — turning a failed login into a silent bounce to a page the reader then
+	 * gets a 404 on. Express Login has already run wp_set_current_user() by the time it
+	 * redirects on success, so this tells the two apart.
+	 */
+	if ( ! is_user_logged_in() ) {
+		return $location;
+	}
+
+	// PHP has already percent-decoded this once on the way into $_REQUEST.
+	$dest = sanitize_text_field( wp_unslash( $_REQUEST[ DS4W_FSP_BOUNCE_DEST ] ) );
+	// phpcs:enable
+
+	// Only ever redirect back into this site.
+	$dest = wp_validate_redirect( $dest, '' );
+
+	return $dest ? $dest : $location;
+}
+add_filter( 'wp_redirect', 'ds4w_fsp_bounce_destination', PHP_INT_MAX - 1, 1 );
+
+/**
+ * Fallback if Express Login is inactive/absent: it normally handles the request on `init`
+ * and exits, so admin-post.php never reaches its action hooks. If it ever does, don't leave
+ * the reader staring at a blank admin page.
+ */
+function ds4w_fsp_bounce_fallback() {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended
+	$dest = ! empty( $_REQUEST[ DS4W_FSP_BOUNCE_DEST ] )
+		? rawurldecode( sanitize_text_field( wp_unslash( $_REQUEST[ DS4W_FSP_BOUNCE_DEST ] ) ) )
+		: '';
+	// phpcs:enable
+
+	wp_safe_redirect( $dest ? $dest : home_url( '/' ), 302 );
+	exit;
+}
+add_action( 'admin_post_nopriv_' . DS4W_FSP_BOUNCE_ACTION, 'ds4w_fsp_bounce_fallback' );
+add_action( 'admin_post_' . DS4W_FSP_BOUNCE_ACTION, 'ds4w_fsp_bounce_fallback' );
+
+/* -------------------------------------------------------------------------
  * Access gate
  * ---------------------------------------------------------------------- */
 
@@ -242,6 +404,22 @@ function ds4w_fsp_gate() {
 	nocache_headers();
 }
 add_action( 'template_redirect', 'ds4w_fsp_gate', 1 );
+
+/**
+ * Never let an old URL for a protected page advertise its new one.
+ *
+ * WordPress remembers a page's previous slugs and 301s them to the current URL. For a
+ * private page that means the retired URL cheerfully hands a stranger the new address.
+ * The gate would still turn them away, so this is defence in depth rather than the lock
+ * itself — but there is no reason to publish the address of a private reading room.
+ *
+ * @param int $post_id Post the old slug resolved to.
+ * @return int 0 to suppress the redirect.
+ */
+function ds4w_fsp_block_old_slug_redirect( $post_id ) {
+	return ds4w_fsp_is_target_page( $post_id ) ? 0 : $post_id;
+}
+add_filter( 'old_slug_redirect_post_id', 'ds4w_fsp_block_old_slug_redirect' );
 
 /* -------------------------------------------------------------------------
  * Target page resolution
