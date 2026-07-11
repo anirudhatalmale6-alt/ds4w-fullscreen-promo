@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fullscreen Promo Popup (Popup Maker add-on)
  * Description: Auto-opens a locked promotional Popup Maker popup on selected pages and puts the visitor's browser into fullscreen on their first interaction. Built for de-stress4wellness.com.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      Anirudha Talmale
  * License:     GPL-2.0-or-later
  * Text Domain: ds4w-fsp
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DS4W_FSP_VERSION', '1.0.0' );
+define( 'DS4W_FSP_VERSION', '1.1.0' );
 define( 'DS4W_FSP_FILE', __FILE__ );
 define( 'DS4W_FSP_URL', plugin_dir_url( __FILE__ ) );
 define( 'DS4W_FSP_PATH', plugin_dir_path( __FILE__ ) );
@@ -100,7 +100,23 @@ function ds4w_fsp_is_target() {
 
 	$id = get_queried_object_id();
 
-	return $id && in_array( (int) $id, ds4w_fsp_target_ids(), true );
+	if ( ! $id || ! in_array( (int) $id, ds4w_fsp_target_ids(), true ) ) {
+		return false;
+	}
+
+	/*
+	 * Password-protected pages: hold the promo back until the visitor is actually in.
+	 *
+	 * WordPress still renders the page (and fires wp_enqueue_scripts) when a password
+	 * is required — it just swaps the content for the password form. Without this guard
+	 * the locked popup would cover that form, and since the lock blocks all interaction
+	 * the visitor could never type the password. It would trap them at the gate.
+	 */
+	if ( post_password_required( $id ) ) {
+		return false;
+	}
+
+	return true;
 }
 
 /* -------------------------------------------------------------------------

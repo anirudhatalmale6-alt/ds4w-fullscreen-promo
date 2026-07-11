@@ -54,6 +54,21 @@ button.
 
 ---
 
+## Password-protected pages
+
+Handled, and it needs handling. WordPress still *renders* a password-protected page
+(and fires `wp_enqueue_scripts`) when the password hasn't been entered — it just swaps
+the content for the password form. So a naive implementation opens the locked promo
+**on top of the password form**, and because the lock blocks all interaction, the visitor
+can never type the password. It traps them at the gate.
+
+The plugin guards on `post_password_required()`, so:
+
+1. Visitor hits the page → sees only the password form, no promo, fully usable.
+2. They enter the password → page unlocks.
+3. *Now* the promo auto-opens and locks the page.
+4. They click the CTA → fullscreen.
+
 ## Browser support
 
 | Browser | Behaviour |
