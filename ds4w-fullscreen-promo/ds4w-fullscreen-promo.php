@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fullscreen Promo Popup (Popup Maker add-on)
  * Description: Auto-opens a locked promotional Popup Maker popup on selected pages and puts the visitor's browser into fullscreen on their first interaction. Built for de-stress4wellness.com.
- * Version:     1.2.0
+ * Version:     1.3.0
  * Author:      Anirudha Talmale
  * License:     GPL-2.0-or-later
  * Text Domain: ds4w-fsp
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DS4W_FSP_VERSION', '1.2.0' );
+define( 'DS4W_FSP_VERSION', '1.3.0' );
 define( 'DS4W_FSP_FILE', __FILE__ );
 define( 'DS4W_FSP_URL', plugin_dir_url( __FILE__ ) );
 define( 'DS4W_FSP_PATH', plugin_dir_path( __FILE__ ) );
@@ -27,8 +27,70 @@ const DS4W_FSP_OPT_CTA_URL  = 'ds4w_fsp_cta_url';   // Optional redirect after g
 const DS4W_FSP_OPT_TARGET   = 'ds4w_fsp_fs_target'; // 'element' = fullscreen the flipbook; 'page' = whole document.
 const DS4W_FSP_OPT_SELECTOR = 'ds4w_fsp_selector';  // CSS selector for the element to fullscreen.
 
+const DS4W_FSP_OPT_GATE     = 'ds4w_fsp_gate';      // 1 = target pages readable only by logged-in users.
+const DS4W_FSP_OPT_GATE_URL = 'ds4w_fsp_gate_url';  // Where to send everyone else.
+
 /** Default selector: the Paperturn flipbook iframe, however Elementor wraps it. */
 const DS4W_FSP_DEFAULT_SELECTOR = '[data-paperturn] iframe, iframe[src*="paperturn"]';
+
+/* -------------------------------------------------------------------------
+ * Access gate
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Close the target pages to anyone who isn't logged in.
+ *
+ * The VIP flow is: reader asks for access -> gets an Express Login magic link -> that
+ * link signs them straight in. That only protects anything if the page is SHUT to
+ * everyone else. As found on 2026-07-11, the page was readable by anyone holding the
+ * URL, so the magic link was gating nothing — one forwarded email and the book is public.
+ *
+ * Deliberately OFF by default: switching this on is what stops the page being public,
+ * and that is not a decision a plugin should make for you on activation.
+ *
+ * This checks is_user_logged_in(), which is the right test *if* Express Login signs the
+ * visitor in as a WordPress user (its "no login needed" flow implies exactly that). If it
+ * instead sets its own cookie, this hook is where that check goes — same place, one line.
+ */
+function ds4w_fsp_gate() {
+	if ( ! (int) get_option( DS4W_FSP_OPT_GATE, 0 ) ) {
+		return;
+	}
+
+	if ( is_admin() || ! is_singular() || is_user_logged_in() ) {
+		return;
+	}
+
+	$id = get_queried_object_id();
+	if ( ! $id || ! in_array( (int) $id, ds4w_fsp_target_ids(), true ) ) {
+		return;
+	}
+
+	/**
+	 * Let Express Login (or anything else) vouch for a visitor who isn't a WP user.
+	 *
+	 * @param bool $allowed Whether this visitor may read the page.
+	 * @param int  $id      Page ID.
+	 */
+	if ( apply_filters( 'ds4w_fsp_allow_access', false, $id ) ) {
+		return;
+	}
+
+	$url = trim( (string) get_option( DS4W_FSP_OPT_GATE_URL, '' ) );
+
+	if ( $url ) {
+		wp_safe_redirect( $url, 302 );
+		exit;
+	}
+
+	// No redirect set: behave as though the page simply doesn't exist. Cheaper than
+	// a "denied" page, and it doesn't confirm to a stranger that the URL is real.
+	global $wp_query;
+	$wp_query->set_404();
+	status_header( 404 );
+	nocache_headers();
+}
+add_action( 'template_redirect', 'ds4w_fsp_gate', 1 );
 
 /* -------------------------------------------------------------------------
  * Target page resolution
@@ -295,6 +357,8 @@ function ds4w_fsp_activate() {
 	add_option( DS4W_FSP_OPT_CTA_URL, '' );
 	add_option( DS4W_FSP_OPT_TARGET, 'element' );
 	add_option( DS4W_FSP_OPT_SELECTOR, '' );
+	add_option( DS4W_FSP_OPT_GATE, 0 );      // Off by default — never lock a live site on activation.
+	add_option( DS4W_FSP_OPT_GATE_URL, '' );
 
 	$existing = (int) get_option( DS4W_FSP_OPT_POPUP_ID, 0 );
 	if ( $existing && get_post( $existing ) && 'trash' !== get_post_status( $existing ) ) {
@@ -380,6 +444,8 @@ function ds4w_fsp_register_settings() {
 		]
 	);
 	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_SELECTOR, [ 'sanitize_callback' => 'sanitize_text_field', 'default' => '' ] );
+	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_GATE, [ 'sanitize_callback' => 'absint', 'default' => 0 ] );
+	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_GATE_URL, [ 'sanitize_callback' => 'esc_url_raw', 'default' => '' ] );
 }
 add_action( 'admin_init', 'ds4w_fsp_register_settings' );
 
@@ -437,6 +503,31 @@ function ds4w_fsp_settings_page() {
 							Hides the close (&times;) button, disables the ESC key, and stops the background from being clicked or scrolled.
 							The only way out is the call-to-action.
 						</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row">Lock these pages to invited readers</th>
+					<td>
+						<label>
+							<input type="checkbox" name="<?php echo esc_attr( DS4W_FSP_OPT_GATE ); ?>" value="1" <?php checked( 1, (int) get_option( DS4W_FSP_OPT_GATE, 0 ) ); ?> />
+							Only logged-in users may open these pages
+						</label>
+						<p class="description">
+							Without this, <strong>anyone holding the URL can read the book</strong> &mdash; including anyone
+							a reader forwards the link to. The Express Login magic link only protects something if
+							everyone else is shut out.
+						</p>
+						<p class="description">
+							Everyone not logged in gets a 404 (as if the page doesn't exist), or the redirect below if you set one.
+							<strong>Test it in a private window before you send invitations.</strong>
+						</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="ds4w_gate_url">Send uninvited visitors to</label></th>
+					<td>
+						<input type="url" id="ds4w_gate_url" name="<?php echo esc_attr( DS4W_FSP_OPT_GATE_URL ); ?>" class="regular-text" value="<?php echo esc_attr( (string) get_option( DS4W_FSP_OPT_GATE_URL, '' ) ); ?>" placeholder="https://de-stress4wellness.com/" />
+						<p class="description">Leave blank to show a 404 instead.</p>
 					</td>
 				</tr>
 				<tr>
