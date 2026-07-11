@@ -28,6 +28,29 @@ body.ds4w-fsp-locked .pum-overlay {
 }
 
 /* ------------------------------------------------------------------ */
+/* The flipbook, once it's fullscreen                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The Paperturn embed is sized by its wrapper (width:100%; height:1080px). Once the
+ * iframe itself is the fullscreen element those inline dimensions still apply, which
+ * would leave the reader letterboxed inside a black screen. Force it to fill.
+ */
+iframe:fullscreen,
+[data-paperturn] iframe:fullscreen {
+	width: 100vw !important;
+	height: 100vh !important;
+	max-width: none !important;
+	max-height: none !important;
+	border: 0 !important;
+}
+
+iframe:-webkit-full-screen {
+	width: 100vw !important;
+	height: 100vh !important;
+}
+
+/* ------------------------------------------------------------------ */
 /* iOS fallback — Safari won't fullscreen a page element, so we pin it */
 /* ------------------------------------------------------------------ */
 

@@ -23,6 +23,8 @@
 
 	var LOCK = !! cfg.lock;
 	var CTA_URL = cfg.ctaUrl || '';
+	var TARGET_MODE = cfg.target || 'element';
+	var SELECTOR = cfg.selector || '';
 
 	var $popup = null;
 	var unlocked = false;   // Flips true once the visitor has acted. Only then may the popup close.
@@ -31,16 +33,58 @@
 	var root = document.documentElement;
 
 	/* ------------------------------------------------------------------ */
+	/* What are we making fullscreen?                                      */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Resolve the element to expand.
+	 *
+	 * Fullscreening the whole document would give you a fullscreen WordPress page —
+	 * header, footer and all — with the flipbook still boxed inside it at its embed
+	 * height. Fullscreening the flipbook IFRAME instead makes the reader itself fill
+	 * the screen, controls and all. That's the point of the exercise.
+	 *
+	 * We're allowed to do this even though the iframe is cross-origin: the iframe is
+	 * just an element in OUR document, so the parent may fullscreen it. (Scripting
+	 * *inside* it would be blocked — we never try.) The Paperturn embed already
+	 * carries allowfullscreen, which is what lets its own controls work in there too.
+	 *
+	 * Resolved at click time, not on load: Paperturn injects the iframe via its own
+	 * script, so it may not exist yet when this file first runs.
+	 *
+	 * @return {Element} The flipbook if we can find it, otherwise the document.
+	 */
+	function fullscreenTarget() {
+		if ( TARGET_MODE !== 'element' || ! SELECTOR ) {
+			return root;
+		}
+
+		var el = null;
+		try {
+			el = document.querySelector( SELECTOR );
+		} catch ( e ) {
+			el = null; // Bad selector typed into the settings screen — don't die, just fall back.
+		}
+
+		// Fall back to any iframe in the page content before giving up on the whole page.
+		if ( ! el ) {
+			el = document.querySelector( '.entry-content iframe, .elementor iframe, main iframe' );
+		}
+
+		return el || root;
+	}
+
+	/* ------------------------------------------------------------------ */
 	/* Fullscreen                                                          */
 	/* ------------------------------------------------------------------ */
 
-	function fullscreenSupported() {
+	function fullscreenSupported( el ) {
 		return !! (
-			root.requestFullscreen ||
-			root.webkitRequestFullscreen ||
-			root.webkitRequestFullScreen ||
-			root.mozRequestFullScreen ||
-			root.msRequestFullscreen
+			el.requestFullscreen ||
+			el.webkitRequestFullscreen ||
+			el.webkitRequestFullScreen ||
+			el.mozRequestFullScreen ||
+			el.msRequestFullscreen
 		);
 	}
 
@@ -73,26 +117,36 @@
 		}
 		fsAttempted = true;
 
-		if ( ! fullscreenSupported() ) {
+		var el = fullscreenTarget();
+
+		if ( ! fullscreenSupported( el ) ) {
 			pseudoFullscreen(); // iOS and other holdouts.
 			return;
 		}
 
+		document.body.classList.add( 'ds4w-fsp-fullscreen' );
+
 		var req =
-			root.requestFullscreen ||
-			root.webkitRequestFullscreen ||
-			root.webkitRequestFullScreen ||
-			root.mozRequestFullScreen ||
-			root.msRequestFullscreen;
+			el.requestFullscreen ||
+			el.webkitRequestFullscreen ||
+			el.webkitRequestFullScreen ||
+			el.mozRequestFullScreen ||
+			el.msRequestFullscreen;
 
 		try {
-			var result = req.call( root, { navigationUI: 'hide' } );
+			var result = req.call( el, { navigationUI: 'hide' } );
 
 			// Standards-compliant browsers return a promise that rejects if the
-			// request is refused (e.g. gesture expired, or an iframe without the
-			// allow="fullscreen" permission). Fall back rather than fail silently.
+			// request is refused (e.g. the gesture expired). If expanding the
+			// flipbook alone fails, try the whole page before giving up entirely.
 			if ( result && typeof result.catch === 'function' ) {
 				result.catch( function () {
+					if ( el !== root && fullscreenSupported( root ) ) {
+						try {
+							root.requestFullscreen();
+							return;
+						} catch ( e2 ) { /* fall through */ }
+					}
 					pseudoFullscreen();
 				} );
 			}

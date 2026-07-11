@@ -54,6 +54,36 @@ button.
 
 ---
 
+## What actually goes fullscreen (and why it matters)
+
+The page embeds a **Paperturn** flipbook in a cross-origin `<iframe>`, inside an Elementor
+HTML widget, in a wrapper fixed at `height: 1080px`.
+
+If you fullscreen the **whole document** (the obvious reading of "put the browser into
+fullscreen"), you get a fullscreen *WordPress page*: site header, footer, and the flipbook
+still boxed inside it at its embed height. The reading experience barely improves.
+
+So by default this plugin fullscreens **the flipbook iframe itself**. Paperturn then fills
+the entire screen with all its page controls visible — the same result as Paperturn's own
+fullscreen button, which is the thing readers never notice because it's hidden behind a
+hover.
+
+This is allowed even though the iframe is cross-origin: the iframe is an element in *our*
+document, so the parent page may fullscreen it. (Scripting *inside* it would be blocked —
+we never try.) The Paperturn embed already ships `allowfullscreen`.
+
+Switchable under **Settings → Fullscreen Promo → What goes fullscreen** if you ever want
+the whole page instead. If the selector matches nothing, it falls back to the whole page
+rather than silently doing nothing.
+
+## Caching
+
+The JS is enqueued as a real file with a version string (`?ver=1.2.0`), so bumping the
+plugin version busts every layer of cache automatically. This is deliberate: pasting the
+script into Popup Maker's custom-JS box works, but that code gets inlined, minified and
+cached with the page, which is a classic source of "my change isn't showing up" problems.
+After any update, purge the site/CDN cache once and it's done.
+
 ## Password-protected pages
 
 Handled, and it needs handling. WordPress still *renders* a password-protected page

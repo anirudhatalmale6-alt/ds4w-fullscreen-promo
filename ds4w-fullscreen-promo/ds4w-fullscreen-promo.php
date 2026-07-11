@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fullscreen Promo Popup (Popup Maker add-on)
  * Description: Auto-opens a locked promotional Popup Maker popup on selected pages and puts the visitor's browser into fullscreen on their first interaction. Built for de-stress4wellness.com.
- * Version:     1.1.0
+ * Version:     1.2.0
  * Author:      Anirudha Talmale
  * License:     GPL-2.0-or-later
  * Text Domain: ds4w-fsp
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DS4W_FSP_VERSION', '1.1.0' );
+define( 'DS4W_FSP_VERSION', '1.2.0' );
 define( 'DS4W_FSP_FILE', __FILE__ );
 define( 'DS4W_FSP_URL', plugin_dir_url( __FILE__ ) );
 define( 'DS4W_FSP_PATH', plugin_dir_path( __FILE__ ) );
@@ -24,6 +24,11 @@ const DS4W_FSP_OPT_TARGETS  = 'ds4w_fsp_targets';   // Raw textarea: page IDs / 
 const DS4W_FSP_OPT_POPUP_ID = 'ds4w_fsp_popup_id';  // ID of the Popup Maker popup we created.
 const DS4W_FSP_OPT_LOCK     = 'ds4w_fsp_lock';      // 1 = popup cannot be dismissed except via the CTA.
 const DS4W_FSP_OPT_CTA_URL  = 'ds4w_fsp_cta_url';   // Optional redirect after going fullscreen.
+const DS4W_FSP_OPT_TARGET   = 'ds4w_fsp_fs_target'; // 'element' = fullscreen the flipbook; 'page' = whole document.
+const DS4W_FSP_OPT_SELECTOR = 'ds4w_fsp_selector';  // CSS selector for the element to fullscreen.
+
+/** Default selector: the Paperturn flipbook iframe, however Elementor wraps it. */
+const DS4W_FSP_DEFAULT_SELECTOR = '[data-paperturn] iframe, iframe[src*="paperturn"]';
 
 /* -------------------------------------------------------------------------
  * Target page resolution
@@ -175,13 +180,18 @@ function ds4w_fsp_enqueue() {
 		true
 	);
 
+	$selector = trim( (string) get_option( DS4W_FSP_OPT_SELECTOR, '' ) );
+
 	wp_localize_script(
 		'ds4w-fsp',
 		'DS4W_FSP',
 		[
-			'popupId' => $popup_id,
-			'lock'    => (bool) get_option( DS4W_FSP_OPT_LOCK, 1 ),
-			'ctaUrl'  => (string) get_option( DS4W_FSP_OPT_CTA_URL, '' ),
+			'popupId'  => $popup_id,
+			'lock'     => (bool) get_option( DS4W_FSP_OPT_LOCK, 1 ),
+			'ctaUrl'   => (string) get_option( DS4W_FSP_OPT_CTA_URL, '' ),
+			// 'element' => fullscreen just the flipbook. 'page' => the whole document.
+			'target'   => (string) get_option( DS4W_FSP_OPT_TARGET, 'element' ),
+			'selector' => '' !== $selector ? $selector : DS4W_FSP_DEFAULT_SELECTOR,
 		]
 	);
 }
@@ -199,10 +209,11 @@ add_action( 'wp_enqueue_scripts', 'ds4w_fsp_enqueue', 20 );
  */
 function ds4w_fsp_default_content() {
 	return '<div class="ds4w-promo">' .
-		'<h2 class="ds4w-promo__title">Your VIP Offer Is Ready</h2>' .
-		'<p class="ds4w-promo__text">You\'ve unlocked private VIP access. Continue to view your exclusive offer.</p>' .
-		'<button type="button" class="ds4w-fs-go">Claim My VIP Offer</button>' .
-		'<p class="ds4w-promo__note">Continuing will open this page in fullscreen.</p>' .
+		'<h2 class="ds4w-promo__title">Welcome to Your VIP Preview</h2>' .
+		'<p class="ds4w-promo__text">For the best reading experience, the book opens in fullscreen &mdash; ' .
+		'so every page control is on screen and nothing gets in your way.</p>' .
+		'<button type="button" class="ds4w-fs-go">Open the Book in Fullscreen</button>' .
+		'<p class="ds4w-promo__note">Press Esc at any time to leave fullscreen.</p>' .
 		'</div>';
 }
 
@@ -282,6 +293,8 @@ function ds4w_fsp_activate() {
 	}
 	add_option( DS4W_FSP_OPT_LOCK, 1 );
 	add_option( DS4W_FSP_OPT_CTA_URL, '' );
+	add_option( DS4W_FSP_OPT_TARGET, 'element' );
+	add_option( DS4W_FSP_OPT_SELECTOR, '' );
 
 	$existing = (int) get_option( DS4W_FSP_OPT_POPUP_ID, 0 );
 	if ( $existing && get_post( $existing ) && 'trash' !== get_post_status( $existing ) ) {
@@ -356,6 +369,17 @@ function ds4w_fsp_register_settings() {
 	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_TARGETS, [ 'sanitize_callback' => 'sanitize_textarea_field', 'default' => '' ] );
 	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_LOCK, [ 'sanitize_callback' => 'absint', 'default' => 1 ] );
 	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_CTA_URL, [ 'sanitize_callback' => 'esc_url_raw', 'default' => '' ] );
+	register_setting(
+		'ds4w_fsp',
+		DS4W_FSP_OPT_TARGET,
+		[
+			'sanitize_callback' => function ( $v ) {
+				return in_array( $v, [ 'element', 'page' ], true ) ? $v : 'element';
+			},
+			'default'           => 'element',
+		]
+	);
+	register_setting( 'ds4w_fsp', DS4W_FSP_OPT_SELECTOR, [ 'sanitize_callback' => 'sanitize_text_field', 'default' => '' ] );
 }
 add_action( 'admin_init', 'ds4w_fsp_register_settings' );
 
@@ -412,6 +436,35 @@ function ds4w_fsp_settings_page() {
 						<p class="description">
 							Hides the close (&times;) button, disables the ESC key, and stops the background from being clicked or scrolled.
 							The only way out is the call-to-action.
+						</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row">What goes fullscreen</th>
+					<td>
+						<?php $target = (string) get_option( DS4W_FSP_OPT_TARGET, 'element' ); ?>
+						<label style="display:block;margin-bottom:6px;">
+							<input type="radio" name="<?php echo esc_attr( DS4W_FSP_OPT_TARGET ); ?>" value="element" <?php checked( 'element', $target ); ?> />
+							<strong>The flipbook only</strong> (recommended) &mdash; the reader fills the whole screen, controls and all.
+						</label>
+						<label style="display:block;">
+							<input type="radio" name="<?php echo esc_attr( DS4W_FSP_OPT_TARGET ); ?>" value="page" <?php checked( 'page', $target ); ?> />
+							<strong>The whole page</strong> &mdash; fullscreens the WordPress page, so the header, footer
+							and the flipbook's embed box all stay visible inside it.
+						</label>
+						<p class="description" style="margin-top:8px;">
+							"The flipbook only" is what gives the clean reading experience &mdash; it's the same result as
+							the flipbook's own fullscreen button, just triggered for the reader instead of hidden behind a hover.
+						</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="ds4w_selector">Flipbook selector</label></th>
+					<td>
+						<input type="text" id="ds4w_selector" name="<?php echo esc_attr( DS4W_FSP_OPT_SELECTOR ); ?>" class="large-text code" value="<?php echo esc_attr( (string) get_option( DS4W_FSP_OPT_SELECTOR, '' ) ); ?>" placeholder="<?php echo esc_attr( DS4W_FSP_DEFAULT_SELECTOR ); ?>" />
+						<p class="description">
+							Leave blank unless the flipbook moves. Defaults to <code><?php echo esc_html( DS4W_FSP_DEFAULT_SELECTOR ); ?></code>,
+							which finds the Paperturn embed. If nothing matches, the plugin falls back to the whole page rather than doing nothing.
 						</p>
 					</td>
 				</tr>
